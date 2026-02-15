@@ -1,69 +1,56 @@
+from datetime import datetime
 from typing import List
-from threading import Lock
 from app.core.exceptions import TaskNotFoundError
-from app.models.task import Task, TaskCreate
-
-_tasks: dict[str, Task] = {}
-_lock = Lock()
-
+from app.models.task import Task, TaskCreate, TaskDB
+from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 class TaskService:
     @staticmethod
-    def create(task_data: TaskCreate) -> Task:
-        new_task = Task.create(
-            title=task_data.title,
-            description=task_data.description
-        )
-
-        with _lock:
-            _tasks[new_task.id] = new_task
-
-        return new_task
+    def create(db: Session, task_data: TaskCreate) -> Task:
+        new_task = TaskDB(title=task_data.title, description=task_data.description)
+        db.add(new_task)
+        db.commit()
+        db.refresh(new_task)
+        return Task.from_orm(new_task)
 
     @staticmethod
-    def get_all() -> List[Task]:
-        with _lock:
-            return list(_tasks.values())
+    def get_all(db: Session) -> List[Task]:
+        return [Task.from_orm(t) for t in db.query(TaskDB).all()]
 
     @staticmethod
-    def get_active_tasks() -> List[Task]:
-        with _lock:
-            active = [task for task in _tasks.values() if task.status == "active"]
-            return [task.model_copy(deep=True) for task in active]
+    def get_active_tasks(db: Session) -> List[Task]:
+        return [Task.from_orm(t) for t in db.query(TaskDB).filter(TaskDB.completed == False).all()]
 
     @staticmethod
-    def get_completed_tasks() -> List[Task]:
-        with _lock:
-            active = [task for task in _tasks.values() if task.status == "completed"]
-            return [task.model_copy(deep=True) for task in active]
+    def get_completed_tasks(db: Session) -> List[Task]:
+        return [Task.from_orm(t) for t in db.query(TaskDB).filter(TaskDB.completed).all()]
 
     @staticmethod
-    def get_task(task_id: str) -> Task:
-        with _lock:
-            task = _tasks.get(task_id)
+    def get_task(db: Session, task_id: str) -> Task:
+        task = db.query(TaskDB).filter(TaskDB.id == task_id).first()
         if task is None:
             raise TaskNotFoundError()
-        return task
+        return Task.from_orm(task)
 
     @staticmethod
-    def complete_task(task_id: str) -> Task:
-        task = TaskService.get_task(task_id)
-        with _lock:
-            task.complete()
-
-        return task
-
-    @staticmethod
-    def uncomplete_task(task_id: str) -> Task:
-        task = TaskService.get_task(task_id)
-        with _lock:
-            task.uncomplete()
-
-        return task
+    def complete_task(db: Session, task_id: str) -> Task:
+        task = TaskService.get_task(db, task_id)
+        db.execute(update(TaskDB).where(TaskDB.id == task_id).values(completed=True, completed_at=datetime.now()))
+        db.commit()
+        return TaskService.get_task(db, task_id)
 
     @staticmethod
-    def delete_task(task_id: str) -> None:
-        with _lock:
-            if task_id not in _tasks:
-                raise TaskNotFoundError()
-            del _tasks[task_id]
+    def uncomplete_task(db: Session, task_id: str) -> Task:
+        task = TaskService.get_task(db, task_id)
+        db.execute(update(TaskDB).where(TaskDB.id == task_id).values(completed=False, completed_at=None))
+        db.commit()
+        return TaskService.get_task(db, task_id)
+
+    @staticmethod
+    def delete_task(db: Session, task_id: str) -> None:
+        task = db.query(TaskDB).filter(TaskDB.id == task_id).first()
+        if task is None:
+            raise TaskNotFoundError()
+        db.delete(task)
+        db.commit()

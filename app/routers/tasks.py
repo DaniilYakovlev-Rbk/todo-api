@@ -1,6 +1,7 @@
-from fastapi import APIRouter, status, HTTPException, Query
+from fastapi import APIRouter, status, HTTPException, Query, Depends
 from typing import List, Literal
-
+from app.core.database import get_db
+from sqlalchemy.orm import Session
 from app.core.exceptions import TaskNotFoundError
 from app.models.task import Task, TaskCreate, UpdateTaskStatus
 from app.services.task_services import TaskService
@@ -13,9 +14,9 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Создать задачу"
 )
-def create_task(task_in: TaskCreate):
+def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
     try:
-        return TaskService.create(task_in)
+        return TaskService.create(db, task_in)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -30,15 +31,16 @@ def create_task(task_in: TaskCreate):
     summary="Получить все задачи"
 )
 def list_tasks(
-    status: Literal["active", "completed"] | None = Query(None)
+    completed: bool | None = Query(None),
+    db: Session = Depends(get_db)
 ):
     try:
-        if status is None:
-            return TaskService.get_all()
-        elif status == "active":
-            return TaskService.get_active_tasks()
-        elif status == "completed":
-            return TaskService.get_completed_tasks()
+        if completed == None:
+            return TaskService.get_all(db)
+        elif completed:
+            return TaskService.get_completed_tasks(db)
+        else:
+            return TaskService.get_active_tasks(db)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -51,9 +53,9 @@ def list_tasks(
     response_model=Task,
     summary="Получить задачу по ID"
 )
-def get_task(task_id: str):
+def get_task(task_id: str, db: Session = Depends(get_db)):
     try:
-        return TaskService.get_task(task_id)
+        return TaskService.get_task(db, task_id)
     except TaskNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -71,16 +73,12 @@ def get_task(task_id: str):
     response_model=Task,
     summary="Изменить статус задачи"
 )
-def update_task_status(task_id: str, update_data: UpdateTaskStatus):
+def update_task_status(task_id: str, update_data: UpdateTaskStatus, db: Session = Depends(get_db)):
     try:
-        if update_data.status == "completed":
-            return TaskService.complete_task(task_id)
-
-        if update_data.status == "active":
-            return TaskService.uncomplete_task(task_id)
-
-        raise ValueError("Недопустимый статус")
-
+        if update_data.completed:
+            return TaskService.complete_task(db, task_id)
+        else:
+            return TaskService.uncomplete_task(db, task_id)
     except TaskNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -97,9 +95,9 @@ def update_task_status(task_id: str, update_data: UpdateTaskStatus):
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Удалить задачу"
 )
-def delete_task(task_id: str):
+def delete_task(task_id: str, db: Session = Depends(get_db)):
     try:
-        TaskService.delete_task(task_id)
+        TaskService.delete_task(db, task_id)
         return None
     except TaskNotFoundError:
         raise HTTPException(
