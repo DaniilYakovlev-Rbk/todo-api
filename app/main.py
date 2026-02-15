@@ -1,7 +1,8 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-
+from app.core.database import Base, engine
 from app.routers import tasks
+
+Base.metadata.create_all(bind=engine)
 
 def get_application() -> FastAPI:
     application = FastAPI(
